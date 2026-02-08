@@ -5,224 +5,139 @@ import numpy as np
 import time
 
 # --- CONFIGURATION ---
-POPULATION_SIZE = 50   # Increased for better diversity
-GENERATIONS = 15       # More time to learn
-TOURNAMENT_SIZE = 5    # Stronger selection pressure
-MUTATION_RATE = 0.3    # More random changes to avoid getting stuck
-DATASET_SAMPLE = 500   
+POPULATION_SIZE = 50   
+GENERATIONS = 20       
+TOURNAMENT_SIZE = 5    
+MUTATION_RATE = 0.2
+STAGNATION_LIMIT = 3   # Triggers "Rescue" if stuck for 3 gens
 
 # --- 1. PRIMITIVES ---
-# Safe division to avoid errors
-def safe_div(a, b):
-    return a / b if b != 0 else 1
-
 OPS = {
     '+': operator.add,
     '-': operator.sub,
     '*': operator.mul,
-    # Removed relational operators (<, >) from inside the tree 
-    # to keep the output numerical, not boolean.
 }
 
-class Node:
-    pass
+class Node: pass
 
 class BinaryOp(Node):
-    def __init__(self, op_symbol, left, right):
-        self.op_symbol = op_symbol
-        self.op_func = OPS[op_symbol]
+    def __init__(self, op, left, right):
+        self.op = op
+        self.func = OPS[op]
         self.left = left
         self.right = right
-
     def evaluate(self, row):
-        return self.op_func(self.left.evaluate(row), self.right.evaluate(row))
-
+        return self.func(self.left.evaluate(row), self.right.evaluate(row))
     def __str__(self):
-        return f"({self.left} {self.op_symbol} {self.right})"
+        return f"({self.left} {self.op} {self.right})"
 
 class FeatureLeaf(Node):
-    def __init__(self, feature_name):
-        self.feature_name = feature_name
-
-    def evaluate(self, row):
-        return float(row[self.feature_name])
-
-    def __str__(self):
-        return self.feature_name
+    def __init__(self, name): self.name = name
+    def evaluate(self, row): return float(row[self.name])
+    def __str__(self): return self.name
 
 class ConstantLeaf(Node):
-    def __init__(self, value):
-        self.value = value
+    def __init__(self, val): self.val = val
+    def evaluate(self, row): return self.val
+    def __str__(self): return f"{self.val:.2f}"
 
-    def evaluate(self, row):
-        return self.value
-
-    def __str__(self):
-        return f"{self.value:.2f}"
-
-# --- 2. GENETIC PROGRAMMING LOGIC ---
-
+# --- 2. GP LOGIC ---
 def generate_random_tree(depth, features):
     if depth == 0 or random.random() < 0.3:
-        if random.random() < 0.7:
-            return FeatureLeaf(random.choice(features))
-        else:
-            return ConstantLeaf(random.uniform(-10, 10))
-    else:
-        op = random.choice(list(OPS.keys()))
-        left = generate_random_tree(depth - 1, features)
-        right = generate_random_tree(depth - 1, features)
-        return BinaryOp(op, left, right)
+        if random.random() < 0.7: return FeatureLeaf(random.choice(features))
+        else: return ConstantLeaf(random.uniform(-10, 10))
+    op = random.choice(list(OPS.keys()))
+    return BinaryOp(op, generate_random_tree(depth-1, features), generate_random_tree(depth-1, features))
 
 def calculate_fitness(tree, data, labels):
-    """
-    Evaluates the rule. 
-    Rule Output > 0  => Predicts 'Attack' (Label 1)
-    Rule Output <= 0 => Predicts 'Normal' (Label 0)
-    """
-    correct = 0
-    total = len(data)
-    
-    # Pre-calculate to speed up
-    # We apply the tree to every row
     try:
-        # Vectorized-like evaluation is hard with this tree structure, 
-        # so we iterate.
-        for idx, row in data.iterrows():
-            try:
-                val = tree.evaluate(row)
-                prediction = 1 if val > 0 else 0
-                
-                # Compare with actual label
-                # Ensure label is integer (0 or 1)
-                actual = int(labels.iloc[idx])
-                
-                if prediction == actual:
-                    correct += 1
-            except (OverflowError, ValueError, ZeroDivisionError):
-                continue # Skip bad calculations
-                
-        return correct / total
-    except Exception as e:
-        return 0.0
+        correct = 0
+        for i, row in data.iterrows():
+            pred = 1 if tree.evaluate(row) > 0 else 0
+            if pred == labels.iloc[i]: correct += 1
+        return correct / len(data)
+    except: return 0.0
 
-def crossover(parent1, parent2):
-    # Simple subtree swap simulation
-    if random.random() < 0.5:
-        return parent1
-    else:
-        return parent2
-
-def mutate(tree, features):
-    # Return a completely new small tree occasionally
-    if random.random() < MUTATION_RATE:
-        return generate_random_tree(2, features)
+def mutate(tree, features, rate=MUTATION_RATE):
+    if random.random() < rate: return generate_random_tree(2, features)
     return tree
 
-# --- 3. MAIN EXECUTION ---
-
+# --- 3. EXECUTION ---
 def run_genclass_demo():
     print("="*60)
     print(" GENCLASS EVOLUTIONARY ENGINE")
     print("="*60)
     
-    # A. Load Data
-    print("Loading data sample...")
+    # Load Data (Simulate if file missing)
     try:
-        # Try loading real data
         df = pd.read_parquet('UNSW_NB15_training-set.parquet')
-        
-        # FIX: Ensure we select columns that are actually numbers
-        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-        
-        # Ensure target column exists and is separated
-        if 'attack_cat' in df.columns:
-            # Create binary label: 1 if attack, 0 if Normal
-            df['label'] = df['attack_cat'].apply(lambda x: 0 if x == 'Normal' else 1)
-        elif 'label' in df.columns:
-            pass # Already has label
-        else:
-            raise ValueError("No label column found!")
-
-        # Remove target cols from features
-        features = [c for c in numeric_cols if c not in ['label', 'id', 'attack_cat']]
-        
-        # Sample data for speed
-        df_sample = df.sample(min(DATASET_SAMPLE, len(df))).reset_index(drop=True)
-        labels = df_sample['label']
-        data = df_sample[features]
-        
-    except Exception as e:
-        print(f"Warning: {e}")
-        print("Using Synthetic Data for Demo...")
-        # Fallback to dummy data if file fails
+        numeric = df.select_dtypes(include=[np.number]).columns.tolist()
+        features = [c for c in numeric if c not in ['id', 'label', 'attack_cat']]
+        df['label'] = df['attack_cat'].apply(lambda x: 0 if x == 'Normal' else 1)
+        data = df.sample(500).reset_index(drop=True)
+    except:
+        # Fallback: Create a solvable pattern for the demo
+        print("(!) Using Synthetic Data for Demo Mode")
         data = pd.DataFrame({
-            'dur': np.random.rand(100) * 10,
-            'sbytes': np.random.randint(0, 10000, 100),
-            'dbytes': np.random.randint(0, 10000, 100)
+            'dur': np.random.rand(500) * 10,
+            'sbytes': np.random.randint(0, 10000, 500),
+            'dbytes': np.random.randint(0, 10000, 500)
         })
-        # Generate labels where high sbytes = Attack (to make it learnable)
-        labels = pd.Series([1 if x > 5000 else 0 for x in data['sbytes']])
-        features = data.columns.tolist()
+        # Rule: If sbytes > 4000, it's an attack. Easy to learn.
+        data['label'] = [1 if x > 4000 else 0 for x in data['sbytes']]
+        features = ['dur', 'sbytes', 'dbytes']
 
-    print(f"Training on {len(data)} records with {len(features)} features.")
+    labels = data['label']
+    print(f"Training on {len(data)} records. Features: {len(features)}")
     print("-" * 60)
 
-    # B. Initialize Population
+    # Init Population
     population = [generate_random_tree(3, features) for _ in range(POPULATION_SIZE)]
-
-    # C. Evolution Loop
-    best_ever_rule = None
     best_ever_score = 0.0
+    stagnant_gens = 0
 
-    for generation in range(GENERATIONS):
-        # 1. Evaluate Fitness
-        scored_population = []
-        for tree in population:
-            score = calculate_fitness(tree, data, labels)
-            scored_population.append((tree, score))
-
-        # Sort: Highest accuracy first
-        scored_population.sort(key=lambda x: x[1], reverse=True)
+    for gen in range(GENERATIONS):
+        # Evaluate
+        scored = [(t, calculate_fitness(t, data, labels)) for t in population]
+        scored.sort(key=lambda x: x[1], reverse=True)
         
-        best_rule, best_score = scored_population[0]
-        
-        # Track global best
-        if best_score > best_ever_score:
-            best_ever_score = best_score
-            best_ever_rule = best_rule
+        current_best_rule, current_best_score = scored[0]
 
-        # # Visualization of progress
-        # bar = "#" * int(best_score * 20)
-        # print(f"Gen {generation+1:02d}: Acc={best_score*100:5.1f}% | {bar:<20} | Rule: {str(best_rule)[:40]}...")
-
-        # Visualization of progress
-        bar = "#" * int(best_score * 20)
-        
-        # Check if we improved
-        if best_score > best_ever_score:
-            prefix = ">>> IMPROVED!" 
-            best_ever_score = best_score # Update global best tracker
-            best_ever_rule = best_rule
+        # Check Progress
+        if current_best_score > best_ever_score:
+            prefix = ">>> IMPROVED!"
+            best_ever_score = current_best_score
+            best_ever_rule = current_best_rule
+            stagnant_gens = 0 # Reset counter
         else:
-            prefix = "             "
+            prefix = ""
+            stagnant_gens += 1
 
-        print(f"Gen {generation+1:02d}: Acc={best_score*100:5.1f}% | {bar:<20} {prefix} | Rule: {str(best_rule)[:50]}")
+        # Visualization
+        bar = "#" * int(current_best_score * 20)
+        rule_str = str(current_best_rule)
+        # Truncate rule string for clean display
+        if len(rule_str) > 45: rule_str = rule_str[:42] + "..."
+            
+        print(f"Gen {gen+1:02d}: Acc={current_best_score*100:5.1f}% | {bar:<20} {prefix:<13} | Rule: {rule_str}")
 
+        # AUTO-RESCUE: Stagnation Check
+        current_mutation_rate = MUTATION_RATE
+        if stagnant_gens >= STAGNATION_LIMIT:
+            # Force diversity!
+            print(f"        [!] Stagnation detected. Injecting high variance...")
+            current_mutation_rate = 0.8 # Massive mutation
+            stagnant_gens = 0
 
-        # 2. Selection & Breeding for Next Gen
-        next_gen = [best_rule] # Elitism (keep the best)
-        
-        # Simple Tournament Selection
+        # Breeding
+        next_gen = [current_best_rule] # Elitism
         while len(next_gen) < POPULATION_SIZE:
-            # Pick 2 random parents
-            candidates = random.sample(scored_population, TOURNAMENT_SIZE)
-            parent1 = max(candidates, key=lambda x: x[1])[0]
-            
-            # Mutate and add to new population
-            child = mutate(parent1, features)
+            # Tournament
+            cands = random.sample(scored, TOURNAMENT_SIZE)
+            parent = max(cands, key=lambda x: x[1])[0]
+            # Mutate child
+            child = mutate(parent, features, rate=current_mutation_rate)
             next_gen.append(child)
-            
         population = next_gen
 
     print("\n" + "="*60)
@@ -233,4 +148,4 @@ def run_genclass_demo():
     print("="*60)
 
 if __name__ == "__main__":
-    run_genclass_demo()
+    run_genclass_demo()S
