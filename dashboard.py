@@ -34,67 +34,64 @@ def generate_smart_rule(attack_type, src_ip):
     rule = {}
     
     # CASE 1: DoS Attack (Syn Flood)
-    # Strategy: Don't block. Rate limit (QoS) and send copy to controller for analysis.
     if attack_type == 'DoS':
-        priority = 60000 # High Priority
+        priority = 60000 
         rule = {
             "table_id": 0,
             "priority": priority,
-            "idle_timeout": 60,  # Rule removes itself if attack stops for 60s
+            "idle_timeout": 60,
             "match": {
-                "eth_type": "0x0800", # IPv4
+                "eth_type": "0x0800",
                 "nw_src": src_ip,
-                "ip_proto": 6,        # TCP
-                "tcp_flags": "0x002"  # SYN Flag only
+                "ip_proto": 6,
+                "tcp_flags": "0x002"
             },
             "instructions": {
                 "apply_actions": [
-                    {"type": "METER", "meter_id": 1}, # Hardware Rate Limiter
-                    {"type": "OUTPUT", "port": "CONTROLLER"} # Mirror to Controller
+                    {"type": "METER", "meter_id": 1}, 
+                    {"type": "OUTPUT", "port": "CONTROLLER"} 
                 ]
             }
         }
-        action_desc = "APPLY QoS (RATE LIMIT SYN PACKETS)"
+        action_desc = "APPLY QoS (RATE LIMIT)"
 
     # CASE 2: Reconnaissance (Port Scanning)
-    # Strategy: Redirect traffic to a "Honeypot" server to trap the attacker.
     elif attack_type == 'Reconnaissance':
         priority = 50000
         honeypot_mac = "00:00:00:00:00:99"
         rule = {
             "table_id": 0,
             "priority": priority,
-            "hard_timeout": 1800, # 30 min ban
+            "hard_timeout": 1800,
             "match": {
                 "eth_type": "0x0800",
                 "nw_src": src_ip
             },
             "actions": [
-                {"type": "SET_FIELD", "field": "eth_dst", "value": honeypot_mac}, # Rewrite Dest MAC
-                {"type": "OUTPUT", "port": 4} # Forward to Honeypot Port
+                {"type": "SET_FIELD", "field": "eth_dst", "value": honeypot_mac}, 
+                {"type": "OUTPUT", "port": 4} 
             ]
         }
-        action_desc = "REDIRECT TO HONEYPOT (DECEPTION)"
+        action_desc = "REDIRECT TO HONEYPOT"
 
-    # CASE 3: Exploits (e.g., SQL Injection / Malware)
-    # Strategy: Quarantine. Tag traffic with VLAN 999 (Dead-end VLAN).
-    else: # Exploits
-        priority = 65535 # Max Priority
+    # CASE 3: Exploits
+    else: 
+        priority = 65535 
         rule = {
             "table_id": 0,
             "priority": priority,
             "match": {
                 "eth_type": "0x0800",
                 "nw_src": src_ip,
-                "tp_dst": 3306 # Protect SQL Database Port
+                "tp_dst": 3306 
             },
             "actions": [
                 {"type": "PUSH_VLAN", "ethertype": "0x8100"},
-                {"type": "SET_FIELD", "field": "vlan_vid", "value": 999}, # Quarantine VLAN
+                {"type": "SET_FIELD", "field": "vlan_vid", "value": 999}, 
                 {"type": "OUTPUT", "port": "NORMAL"}
             ]
         }
-        action_desc = "ISOLATE HOST (VLAN QUARANTINE)"
+        action_desc = "VLAN QUARANTINE"
 
     return rule, action_desc
 
@@ -103,14 +100,12 @@ def generate_traffic():
     # 85% Normal, 15% Attack
     if random.random() > 0.15:
         pred = 'Normal'
-        action = "FORWARD"
-        policy = None
         action_desc = "ALLOW"
+        policy = None
     else:
         pred = random.choice(['DoS', 'Exploits', 'Reconnaissance'])
         src_ip = f"192.168.1.{random.randint(2, 254)}"
         
-        # Generate the sophisticated rule
         policy, action_desc = generate_smart_rule(pred, src_ip)
         
         return {
@@ -178,48 +173,55 @@ try:
                     return f'color: {color}; font-weight: bold'
 
                 if not df.empty:
-                    # Clean table for display
                     display_df = df[['timestamp', 'src_ip', 'proto', 'prediction', 'action']]
                     st.dataframe(
                         display_df.style.map(color_rows, subset=['prediction', 'action']),
-                        width=1000, # Fixed width for stability
+                        width=1000,
                         height=400
                     )
 
-            # Right: Policy Engine
+            # Right: Policy Engine & Chart
             with right:
                 st.subheader("⚡ Control Plane Actions")
                 
                 if st.session_state.alerts:
                     alert = st.session_state.alerts[0]
                     
-                    # 1. Threat Card
                     st.error(f"🚨 **{alert['prediction']} DETECTED**")
-                    st.caption(f"Source: {alert['src_ip']} | Proto: {alert['proto']}")
+                    st.caption(f"Source: {alert['src_ip']}")
                     
-                    # 2. The Sophisticated Rule
                     st.markdown("**Generated OpenFlow 1.3 Rule:**")
                     st.json(alert['policy'])
-                    
-                    # 3. Explanation for the Reviewer
-                    if alert['prediction'] == 'DoS':
-                        st.info("ℹ️ **Logic:** Rate Limit applied to prevent congestion without disconnecting user.")
-                    elif alert['prediction'] == 'Reconnaissance':
-                        st.info("ℹ️ **Logic:** Redirected to Honeypot to gather threat intelligence.")
-                    else:
-                        st.info("ℹ️ **Logic:** Host moved to VLAN 999 (Quarantine) to protect SQL DB.")
-
                 else:
                     st.success("✅ Network Secure. No active threats.")
-                    
-                # Chart
+                
+                # FIX: Explicit Color Mapping
                 if not df.empty:
-                    counts = df['prediction'].value_counts()
-                    fig = px.pie(values=counts.values, names=counts.index, hole=0.5, color_discrete_sequence=px.colors.sequential.RdBu)
-                    fig.update_layout(margin=dict(t=20, b=0, l=0, r=0), height=200, showlegend=False)
+                    # Define strict colors
+                    color_map = {
+                        'Normal': '#00cc96',  # Green
+                        'DoS': '#EF553B',     # Red
+                        'Exploits': '#FFA15A', # Orange
+                        'Reconnaissance': '#AB63FA' # Purple
+                    }
+                    
+                    fig = px.pie(
+                        df, 
+                        names='prediction', 
+                        hole=0.5,
+                        color='prediction',
+                        color_discrete_map=color_map, # Forces the colors
+                        title="Threat Distribution"
+                    )
+                    fig.update_layout(
+                        margin=dict(t=30, b=0, l=0, r=0), 
+                        height=250, 
+                        showlegend=False
+                    )
                     st.plotly_chart(fig, use_container_width=True, key=f"chart_{time.time()}")
 
-        time.sleep(1.5) # Slower loop to let them read the complex rules
+        time.sleep(1.5)
 
 except KeyboardInterrupt:
     st.write("Stopped")
+
