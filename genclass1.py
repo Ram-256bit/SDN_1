@@ -148,4 +148,4 @@ def run_genclass_demo():
     print("="*60)
 
 if __name__ == "__main__":
-    run_genclass_demo()S
+    run_genclass_demo()
