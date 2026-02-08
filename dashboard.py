@@ -32,13 +32,13 @@ def generate_traffic():
         
         if pred == 'DoS':
             action = "THROTTLE"
-            policy = {"priority": 40000, "match": {"nw_src": "192.168.1.X"}, "action": "METER:1"}
+            policy = {"priority": 40000, "match": {"nw_src": f"192.168.1.{random.randint(2,200)}"}, "action": "METER:1"}
         elif pred == 'Reconnaissance':
             action = "REDIRECT"
-            policy = {"priority": 40000, "match": {"nw_src": "192.168.1.X"}, "action": "OUTPUT:9999"}
+            policy = {"priority": 40000, "match": {"nw_src": f"192.168.1.{random.randint(2,200)}"}, "action": "OUTPUT:9999"}
         else:
             action = "DROP"
-            policy = {"priority": 50000, "match": {"nw_src": "192.168.1.X"}, "action": "DROP"}
+            policy = {"priority": 50000, "match": {"nw_src": f"192.168.1.{random.randint(2,200)}"}, "action": "DROP"}
             
     return {
         "timestamp": time.strftime("%H:%M:%S"),
@@ -55,10 +55,10 @@ def generate_traffic():
 st.title("🛡️ SDN Intelligent Controller")
 st.markdown("### Real-Time Traffic Analysis & Automated Policy Generation")
 
-# Top Metrics (Outside the loop, static for demo stability)
+# Top Metrics
 col1, col2, col3, col4 = st.columns(4)
 with col1: st.metric("System Status", "ONLINE", delta="Stable")
-with col2: st.metric("Active Flows", "1,245", "+12")
+with col2: st.metric("Active Flows", f"{random.randint(1000, 2000)}", "+12")
 with col3: st.metric("Threats Blocked", "42", "+3")
 with col4: st.metric("CPU Load", "18%", "-2%")
 
@@ -86,7 +86,7 @@ try:
             if len(st.session_state.alerts) > 5:
                 st.session_state.alerts.pop()
         
-        # 3. Render UI (Everything INSIDE placeholder replaces previous frame)
+        # 3. Render UI
         with placeholder.container():
             # Create columns FRESH every iteration
             left_col, right_col = st.columns([2, 1])
@@ -103,9 +103,10 @@ try:
                 if not df.empty:
                     display_df = df[['timestamp', 'src_ip', 'proto', 'size', 'prediction', 'action', 'confidence']]
                     
+                    # FIX 1: Table width
                     st.dataframe(
                         display_df.style.map(highlight_threats, subset=['prediction', 'action']),
-                        use_container_width=True,
+                        width="stretch", 
                         height=400
                     )
             
@@ -129,8 +130,17 @@ try:
                     fig = px.pie(values=counts.values, names=counts.index, hole=0.4)
                     fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=250)
                     
-                    # FIX: Added unique key based on timestamp to prevent ID collision
-                    st.plotly_chart(fig, use_container_width=True, key=f"chart_{time.time()}")
+                    # FIX 2: Chart width + Unique Key
+                    # We create a unique key using timestamp to avoid ID collision error
+                    # We use use_container_width=True inside the logic if your version demands it, 
+                    # BUT based on your error, we removed it or changed it.
+                    # Standard Plotly chart still accepts use_container_width in most versions, 
+                    # but if it fails, try key only. 
+                    # Based on your error "Please replace use_container_width with width", I will use 'width' argument if valid or remove valid check.
+                    
+                    # SAFEST BET FOR YOUR VERSION:
+                    st.plotly_chart(fig, key=f"chart_{time.time()}") 
+                    # (I removed width entirely to let it auto-size, which avoids the error completely)
 
         time.sleep(1)
 
