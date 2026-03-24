@@ -36,19 +36,44 @@ def load_assets():
 
 model, scaler, encoder = load_assets()
 
-# --- Dynamic OpenFlow Rule Generation ---
+# --- Updated Dynamic OpenFlow Rule Generation with Timeouts ---
 def generate_openflow_rule(threat_type, src_ip):
     threat = threat_type.upper()
+    
+    # Standard timeouts (in seconds)
+    IDLE = 300   # 5 minutes of inactivity
+    HARD = 3600  # 1 hour maximum life
+    
     if threat == "NORMAL":
         return "ALLOW", "No action required"
+    
     elif threat == "DOS":
-        return "RATE LIMIT", f"ovs-ofctl add-flow br0 priority=100,dl_type=0x0800,nw_src={src_ip},actions=set_queue:1,output:normal"
+        # Rate limiting rule with timeouts
+        return "RATE LIMIT", (
+            f"ovs-ofctl add-flow br0 priority=100,idle_timeout={IDLE},hard_timeout={HARD},"
+            f"dl_type=0x0800,nw_src={src_ip},actions=set_queue:1,output:normal"
+        )
+    
     elif threat in ["EXPLOITS", "SHELLCODE", "BACKDOOR"]:
-        return "QUARANTINE", f"ovs-ofctl add-flow br0 priority=100,dl_type=0x0800,nw_src={src_ip},actions=drop"
+        # Immediate block/quarantine with timeouts
+        return "QUARANTINE", (
+            f"ovs-ofctl add-flow br0 priority=100,idle_timeout={IDLE},hard_timeout={HARD},"
+            f"dl_type=0x0800,nw_src={src_ip},actions=drop"
+        )
+    
     elif threat in ["RECONNAISSANCE", "ANALYSIS"]:
-        return "HONEYPOT", f"ovs-ofctl add-flow br0 priority=100,dl_type=0x0800,nw_src={src_ip},actions=CONTROLLER,output:normal"
+        # Redirect to honeypot with timeouts
+        return "HONEYPOT", (
+            f"ovs-ofctl add-flow br0 priority=100,idle_timeout={IDLE},hard_timeout={HARD},"
+            f"dl_type=0x0800,nw_src={src_ip},actions=CONTROLLER,output:normal"
+        )
+    
     else:
-        return "DROP", f"ovs-ofctl add-flow br0 priority=50,dl_type=0x0800,nw_src={src_ip},actions=drop"
+        # Default drop for other malicious categories (Fuzzers, Worms, etc.)
+        return "DROP", (
+            f"ovs-ofctl add-flow br0 priority=50,idle_timeout={IDLE},hard_timeout={HARD},"
+            f"dl_type=0x0800,nw_src={src_ip},actions=drop"
+        )
 
 # --- Pandas Styling Function ---
 def highlight_threats(row):
